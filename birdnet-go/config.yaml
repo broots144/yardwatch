@@ -1,0 +1,68 @@
+# BirdNET-Go for the feeder station. Only keys that differ from upstream defaults.
+# Audio comes from Frigate's go2rtc restream, so the camera sees one client, not two.
+# Reference: https://github.com/tphakala/birdnet-go/wiki
+
+main:
+  name: Spyglass Feeder
+
+birdnet:
+  locale: en-us
+  latitude: 40.0506          # Lebanon, IN. Tighten to your lot if you like; the range filter only cares to ~0.1 deg.
+  longitude: -86.4692
+  threshold: 0.75
+  overlap: 2.2               # ~4 looks at each 3 s window
+  rangefilter:
+    threshold: 0.03          # drop species unlikely at this lat/lon/week. 0.01 default lets fjord birds through.
+
+realtime:
+  interval: 15               # seconds between repeat detections of a species
+  falsepositivefilter:
+    level: 2
+  dynamicthreshold:
+    enabled: false           # a confident hit must not lower the bar to 0.2 for a day
+  audio:
+    export:
+      enabled: true          # 15 s clip per detection, shown in the UI and pushed to HA
+  rtsp:
+    transport: tcp
+    streams:
+      - name: feeder
+        url: rtsp://frigate:8554/feeder
+        enabled: true
+        type: rtsp
+        transport: tcp
+        channelMode: downmix
+        mediaMode: audio-only      # go2rtc can SETUP the audio track alone; falls back if not
+        gain: 0
+  mqtt:
+    enabled: true
+    broker: tcp://mosquitto:1883
+    topic: birdnet             # detections publish as JSON on birdnet; YA-WAMF listens on birdnet/text by default, set it to birdnet
+    retain: false
+  birdweather:
+    enabled: false             # flip on and paste the station token from app.birdweather.com to join the public map
+    id: ""
+    threshold: 0.7
+    locationaccuracy: 500      # metres of blur on the public map
+
+output:
+  sqlite:
+    enabled: true
+    path: /data/birdnet.db
+
+logging:
+  default_level: info
+  file_output:
+    max_size: 10
+    max_age: 7
+    max_rotated_files: 2
+    compress: true
+  modules:
+    access: {level: info}
+    analysis: {level: info}
+    api: {level: info}
+    audio: {level: info}
+    birdnet: {level: info}
+    datastore: {level: info}
+    mqtt: {level: info}
+    rtsp: {level: info}

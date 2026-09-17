@@ -1,0 +1,147 @@
+# yardwatch: backyard feeder station for one Amcrest PoE camera, zero outdoor compute.
+#
+#   Amcrest IP8M-T2599EW ──rtsp──▶ frigate (go2rtc restream + bird detection + clips)
+#                                     │  rtsp://frigate:8554/feeder   (one camera session, many readers)
+#                                     ├──▶ birdnet-go   (audio ID from the restream, MQTT out, BirdWeather)
+#                                     └──▶ yawamf       (species ID on Frigate "bird" events, correlates with birdnet-go)
+#   birdnet-go /api/v2 ──▶ fugleramme (the naturalist-plate kiosk, :8080)
+#   everything ──mqtt──▶ mosquitto ──▶ Home Assistant (lifer pushes, TTS, nightly digest)
+#
+# Bring-up order: mosquitto, frigate, birdnet-go, fugleramme, yawamf.
+# Copy .env.example to .env first. Every host-specific value lives there.
+
+name: yardwatch
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: yw-mosquitto
+    restart: unless-stopped
+    <<: *logging
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    networks: [yardwatch]
+
+  frigate:
+    # Pin a real tag before production; 0.17 is the floor YA-WAMF requires.
+    image: ghcr.io/blakeblackshear/frigate:${FRIGATE_TAG:-stable}
+    container_name: yw-frigate
+    restart: unless-stopped
+    <<: *logging
+    privileged: false
+    shm_size: "256mb"            # 4K main stream needs headroom; 64mb default will crash the decoder
+    environment:
+      TZ: ${TZ}
+      CAM_USER: ${CAM_USER}
+      CAM_PASS: ${CAM_PASS}
+      CAM_IP: ${CAM_IP}
+      FRIGATE_RTSP_PASSWORD: ${CAM_PASS}
+    volumes:
+      - ./frigate/config.yml:/config/config.yml:ro
+      - frigate-config:/config
+      - ${FRIGATE_MEDIA:-./frigate/media}:/media/frigate
+      - type: tmpfs
+        target: /tmp/cache
+        tmpfs:
+          size: 1000000000
+    # Intel iGPU for OpenVINO detect + VAAPI decode. Comment out on a host without /dev/dri.
+    devices:
+      - /dev/dri:/dev/dri
+    ports:
+      - "5000:5000"    # UI / API
+      - "8554:8554"    # go2rtc RTSP restream (birdnet-go reads this)
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    networks: [yardwatch]
+    depends_on: [mosquitto]
+
+  birdnet-go:
+    # Upstream tags by date. Pin, do not float: an unattended pull must not swap the detector.
+    image: ghcr.io/tphakala/birdnet-go:${BIRDNET_TAG:-20260823}
+    container_name: yw-birdnet-go
+    restart: unless-stopped
+    <<: *logging
+    environment:
+      TZ: ${TZ}
+      BIRDNET_UID: ${PUID:-1000}
+      BIRDNET_GID: ${PGID:-1000}
+    volumes:
+      - ./birdnet-go/config.yaml:/config/config.yaml
+      - birdnet-config:/config
+      - birdnet-data:/data            # detections live here. keep it.
+    tmpfs:
+      - /data/logs:size=128M,uid=${PUID:-1000},gid=${PGID:-1000},mode=0755
+      - /config/hls:exec,size=50M,uid=${PUID:-1000},gid=${PGID:-1000},mode=0755
+    ports:
+      - "8090:8080"
+    networks: [yardwatch]
+    depends_on: [mosquitto, frigate]
+
+  fugleramme:
+    image: ghcr.io/arnegiacomo/fugleramme:${FUGLERAMME_TAG:-latest}
+    container_name: yw-fugleramme
+    restart: unless-stopped
+    <<: *logging
+    environment:
+      FUGLERAMME_DETECTOR_URL: http://birdnet-go:8080
+      TZ: ${TZ}
+    volumes:
+      - fugleramme-data:/data
+      # Your own cut-outs (Audubon plates etc). Select "custom" in :8080/admin.
+      - ./artwork/custom:/app/assets/artwork/custom:ro
+    ports:
+      - "8080:8080"
+    networks: [yardwatch]
+    depends_on: [birdnet-go]
+
+  yawamf:
+    image: ghcr.io/jellman86/yawamf-monalithic:${YAWAMF_TAG:-latest-intel}
+    container_name: yw-yawamf
+    restart: unless-stopped
+    <<: *logging
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      FRIGATE__FRIGATE_URL: http://frigate:5000
+      FRIGATE__MQTT_SERVER: mosquitto
+      FRIGATE__MQTT_PORT: "1883"
+      FRIGATE__MQTT_AUTH: "false"
+      FRIGATE__CLIPS_ENABLED: "true"
+      CLASSIFIER_IMAGE_MAX_CONCURRENT: "2"
+    volumes:
+      - yawamf-config:/config
+      - yawamf-data:/data
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-107}"
+      - "${VIDEO_GID:-44}"
+    ports:
+      - "9852:8080"
+    networks: [yardwatch]
+    depends_on: [mosquitto, frigate, birdnet-go]
+
+networks:
+  yardwatch:
+    name: yardwatch
+
+volumes:
+  mosquitto-data:
+  frigate-config:
+  birdnet-config:
+  birdnet-data:
+  fugleramme-data:
+  yawamf-config:
+  yawamf-data:

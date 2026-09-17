@@ -1,0 +1,150 @@
+# Home Assistant package for yardwatch. Drop in config/packages/yardwatch.yaml
+# (packages: !include_dir_named packages) and set the three inputs below.
+#
+# Design rule: she gets a push only for something worth walking to the window for.
+#   1. first time this species has been heard THIS YEAR  (a "yard lifer" or "first of year")
+#   2. confidence >= 0.85
+#   3. not within quiet hours
+# Everything else lands on the wall frame and in the nightly digest, silently.
+#
+# BirdNET-Go publishes one JSON per detection on topic `birdnet`, fields used here:
+#   CommonName, ScientificName, Confidence (0..1), ClipName, BeginTime, detectionId, sourceName, BirdImage.url
+
+input_text:
+  yardwatch_notify_target:
+    name: Yardwatch notify service
+    initial: notify.mobile_app_her_phone        # <- her phone's notify service
+
+input_boolean:
+  yardwatch_tts:
+    name: Yardwatch speaker announcements
+    initial: false
+
+mqtt:
+  sensor:
+    - name: "Yardwatch last detection"
+      unique_id: yardwatch_last_detection
+      state_topic: "birdnet"
+      value_template: "{{ value_json.CommonName }}"
+      json_attributes_topic: "birdnet"
+      json_attributes_template: >
+        {{ {
+          'scientific': value_json.ScientificName,
+          'confidence': value_json.Confidence,
+          'clip': value_json.ClipName,
+          'source': value_json.sourceName | default(value_json.sourceId),
+          'detection_id': value_json.detectionId,
+          'time': value_json.BeginTime
+        } | tojson }}
+    - name: "Yardwatch last sighting"
+      unique_id: yardwatch_last_sighting
+      # YA-WAMF publishes classified visual sightings; topic per its Settings > Integrations > MQTT
+      state_topic: "yawamf/detections"
+      value_template: "{{ value_json.common_name | default('unknown') }}"
+      json_attributes_topic: "yawamf/detections"
+
+# Year list kept as a set in a trigger-based template sensor so it survives restarts.
+template:
+  - trigger:
+      - platform: mqtt
+        topic: "birdnet"
+    sensor:
+      - name: "Yardwatch year list"
+        unique_id: yardwatch_year_list
+        state: >
+          {% set cur = this.attributes.get('species', []) if this is defined and this.attributes is defined else [] %}
+          {% set yr = this.attributes.get('year', now().year) if this is defined and this.attributes is defined else now().year %}
+          {% set cur = [] if yr != now().year else cur %}
+          {% set sp = trigger.payload_json.ScientificName %}
+          {% set conf = trigger.payload_json.Confidence | float(0) %}
+          {{ (cur | length) + (0 if sp in cur or conf < 0.85 else 1) }}
+        attributes:
+          year: "{{ now().year }}"
+          species: >
+            {% set cur = this.attributes.get('species', []) if this is defined and this.attributes is defined else [] %}
+            {% set yr = this.attributes.get('year', now().year) if this is defined and this.attributes is defined else now().year %}
+            {% set cur = [] if yr != now().year else cur %}
+            {% set sp = trigger.payload_json.ScientificName %}
+            {% set conf = trigger.payload_json.Confidence | float(0) %}
+            {{ (cur + ([sp] if sp not in cur and conf >= 0.85 else [])) | tojson }}
+          new_species: >
+            {% set cur = this.attributes.get('species', []) if this is defined and this.attributes is defined else [] %}
+            {% set yr = this.attributes.get('year', now().year) if this is defined and this.attributes is defined else now().year %}
+            {% set cur = [] if yr != now().year else cur %}
+            {% set sp = trigger.payload_json.ScientificName %}
+            {% set conf = trigger.payload_json.Confidence | float(0) %}
+            {{ 'true' if sp not in cur and conf >= 0.85 else 'false' }}
+          last_common: "{{ trigger.payload_json.CommonName }}"
+          last_scientific: "{{ trigger.payload_json.ScientificName }}"
+          last_confidence: "{{ trigger.payload_json.Confidence }}"
+          last_clip: "{{ trigger.payload_json.ClipName }}"
+          last_id: "{{ trigger.payload_json.detectionId }}"
+          last_image: "{{ trigger.payload_json.BirdImage.url | default('') }}"
+
+automation:
+  - id: yardwatch_first_of_year_push
+    alias: "Yardwatch: first-of-year push"
+    mode: queued
+    trigger:
+      - platform: state
+        entity_id: sensor.yardwatch_year_list
+        attribute: last_clip
+    condition:
+      - condition: template
+        value_template: "{{ state_attr('sensor.yardwatch_year_list', 'new_species') == 'true' }}"
+      - condition: time
+        after: "06:30:00"
+        before: "21:30:00"
+    action:
+      - service: "{{ states('input_text.yardwatch_notify_target') }}"
+        data:
+          title: "New for the yard this year"
+          message: >
+            {{ state_attr('sensor.yardwatch_year_list', 'last_common') }}
+            ({{ (state_attr('sensor.yardwatch_year_list', 'last_confidence') | float * 100) | round(0) }}%).
+            Species #{{ states('sensor.yardwatch_year_list') }} this year.
+          data:
+            # /api/v2/audio/<id> waits for encoding, so the link works even seconds after the detection.
+            url: "http://birdnet.local:8090/api/v2/audio/{{ state_attr('sensor.yardwatch_year_list', 'last_id') }}"
+            image: "{{ state_attr('sensor.yardwatch_year_list', 'last_image') }}"
+            tag: yardwatch-lifer
+            group: yardwatch
+      - condition: state
+        entity_id: input_boolean.yardwatch_tts
+        state: "on"
+      - service: tts.speak
+        target:
+          entity_id: tts.piper            # or tts.google_translate_en_com
+        data:
+          media_player_entity_id: media_player.kitchen   # <- her speaker
+          message: "A {{ state_attr('sensor.yardwatch_year_list', 'last_common') }} is in the yard. First one this year."
+
+  - id: yardwatch_nightly_digest
+    alias: "Yardwatch: nightly digest"
+    trigger:
+      - platform: time
+        at: "20:30:00"
+    action:
+      - service: rest_command.birdnet_species_today
+        response_variable: today
+      - service: "{{ states('input_text.yardwatch_notify_target') }}"
+        data:
+          title: "Yard report"
+          message: >
+            {% set rows = today.content if today is defined and today.content is defined else [] %}
+            {% if rows | count == 0 %}Quiet day. Nothing confident enough to count.
+            {% else %}{{ rows | count }} species today:
+            {% for r in rows[:8] %}{{ r.common_name }} ({{ r.count }}){{ ', ' if not loop.last }}{% endfor %}{% if rows | count > 8 %}, and {{ rows | count - 8 }} more{% endif %}.
+            {% endif %}
+            Year list: {{ states('sensor.yardwatch_year_list') }} species.
+          data:
+            url: "http://frame.local:8080"
+            tag: yardwatch-digest
+            group: yardwatch
+
+rest_command:
+  # BirdNET-Go v2 analytics: per-species counts for a date range.
+  birdnet_species_today:
+    url: "http://birdnet.local:8090/api/v2/analytics/species/summary?start_date={{ now().strftime('%Y-%m-%d') }}&end_date={{ now().strftime('%Y-%m-%d') }}"
+    method: GET
+    timeout: 15

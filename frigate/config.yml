@@ -1,0 +1,105 @@
+# Frigate 0.17 config for one Amcrest IP8M-T2599EW aimed at the feeder.
+# ${CAM_USER} ${CAM_PASS} ${CAM_IP} are substituted from the container environment.
+#
+# Camera-side settings to make before this works (web UI at http://CAM_IP):
+#   Setting > Camera > Video: main stream H.264 (not H.265) 3840x2160 @ 15 fps, CBR ~8192 kbps, I-frame interval 15 (1s)
+#                             sub stream H.264, the largest the firmware offers (1280x720 if listed, else 704x576) @ 10 fps
+#   Setting > Camera > Audio: Enable, encode AAC, sample rate the highest offered (48k > 32k > 16k), bitrate max, AGC/noise filter OFF
+#   Setting > Network > P2P: disable.  Setting > Network > Access platform / Cloud: disable.
+#   Setting > System > Account: add user "frigate" with live + playback only.
+#   Setting > Camera > Conditions: day mode forced, IR off (spider webs), WDR on if the feeder is backlit.
+
+mqtt:
+  enabled: true
+  host: mosquitto
+  port: 1883
+  topic_prefix: frigate
+
+# Intel iGPU. On a host without one, replace with:  detectors: {cpu1: {type: cpu, num_threads: 3}}
+detectors:
+  ov:
+    type: openvino
+    device: GPU
+
+model:
+  width: 320
+  height: 320
+  input_tensor: nchw
+  input_pixel_format: bgr
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+
+ffmpeg:
+  hwaccel_args: preset-vaapi     # VAAPI decode on the iGPU; remove on a CPU-only host
+
+go2rtc:
+  streams:
+    # One camera session each; every consumer (Frigate record, Frigate detect, BirdNET-Go, your phone) reads from here.
+    feeder:
+      - rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554/cam/realmonitor?channel=1&subtype=0#backchannel=0
+    feeder_sub:
+      - rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554/cam/realmonitor?channel=1&subtype=1#backchannel=0
+
+cameras:
+  feeder:
+    enabled: true
+    ffmpeg:
+      output_args:
+        record: preset-record-generic-audio-copy   # keep the AAC track in recordings
+      inputs:
+        - path: rtsp://127.0.0.1:8554/feeder
+          input_args: preset-rtsp-restream
+          roles: [record]
+        # Detect on the sub stream. If the firmware only offers 704x576 and birds
+        # at 1 m come out under ~40 px there, switch this input to the main stream
+        # and set detect width/height to 1920x1080 (Frigate downscales for the model).
+        - path: rtsp://127.0.0.1:8554/feeder_sub
+          input_args: preset-rtsp-restream
+          roles: [detect]
+    detect:
+      enabled: true
+      width: 1280
+      height: 720
+      fps: 5
+    objects:
+      track: [bird]
+      filters:
+        bird:
+          min_area: 400       # px^2 on the detect stream; raise if leaves trigger it
+          threshold: 0.65
+          min_score: 0.45
+    record:
+      enabled: true
+      retain:
+        days: 2
+        mode: motion
+      alerts:
+        retain:
+          days: 30
+      detections:
+        retain:
+          days: 14
+    snapshots:
+      enabled: true
+      bounding_box: false
+      crop: true            # YA-WAMF classifies the crop; a tight one helps
+      quality: 90
+      retain:
+        default: 14
+    review:
+      alerts:
+        labels: [bird]
+    motion:
+      # Feeders swing. Mask the sky/tree-tops region once you see the frame; keep the perch area unmasked.
+      threshold: 30
+      improve_contrast: true
+
+# YA-WAMF uses these events; nothing else needs the Frigate UI on the LAN.
+detect:
+  enabled: true
+
+birdseye:
+  enabled: false
+
+telemetry:
+  version_check: false

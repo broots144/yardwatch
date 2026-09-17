@@ -1,0 +1,11 @@
+.env
+frigate/media/
+artwork/custom/birds/*.webp
+artwork/custom/birds/*.png
+tools/plates/.cache/
+tools/plates/candidates/
+tools/plates/out/
+__pycache__/
+.venv/
+*.pyc
+.DS_Store
