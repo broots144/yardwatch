@@ -34,7 +34,7 @@ services:
 
   frigate:
     # Pin a real tag before production; 0.17 is the floor YA-WAMF requires.
-    image: ghcr.io/blakeblackshear/frigate:${FRIGATE_TAG:-stable}
+    image: ghcr.io/blakeblackshear/frigate:${FRIGATE_TAG:-0.17.2}
     container_name: yw-frigate
     restart: unless-stopped
     <<: *logging
