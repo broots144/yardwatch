@@ -27,6 +27,7 @@ Backyard feeder station for Dustin (Workshop 144). One Amcrest IP8M-T2599EW PoE 
 
 - Compose is the deployment unit. No Helm until it has run for a month.
 - Secrets only in `.env` (gitignored). Configs may reference `${VARS}`.
+  - Exception, Frigate: `frigate/config.yml` must use `{FRIGATE_NAME}` (single braces, no `$`), and only env vars whose names start with `FRIGATE_` are substituted. Frigate runs Python `str.format` over go2rtc streams and camera input paths, so `${VAR}` or a non-`FRIGATE_` name raises KeyError and go2rtc does not start. Pass values from `.env` to the container as `FRIGATE_*` in `docker-compose.yml`. Literal `{` or `}` in a substituted value (e.g. the camera password) also breaks it. Verified against v0.17.2 `docker/main/rootfs/usr/local/go2rtc/create_config.py` and `frigate/config/env.py`.
 - Python tools: `uv`, `pyproject.toml` per tool dir, ruff, type hints, no notebooks.
 - Every claim in docs is labeled fact / estimate / guess when it is not verifiable from this repo.
 - No em dashes or en dashes anywhere, including generated docs and commit messages.
