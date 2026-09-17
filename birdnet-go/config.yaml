@@ -1,4 +1,7 @@
 # BirdNET-Go for the feeder station. Only keys that differ from upstream defaults.
+# Seed only: birdnet-go-seed copies this into the birdnet-config volume when no live
+# config exists. BirdNET-Go then owns the live copy (it writes a session secret and UI
+# edits there). Re-seed with SEED_FORCE=1, see docker-compose.yml.
 # Audio comes from Frigate's go2rtc restream, so the camera sees one client, not two.
 # Reference: https://github.com/tphakala/birdnet-go/wiki
 

@@ -38,7 +38,7 @@ Backyard feeder station for Dustin (Workshop 144). One Amcrest IP8M-T2599EW PoE 
 ```
 docker-compose.yml        the stack
 .env.example              host-specific values
-birdnet-go/config.yaml    BirdNET-Go overrides (Lebanon IN, RTSP from go2rtc, MQTT)
+birdnet-go/config.yaml    BirdNET-Go seed config (Lebanon IN, RTSP from go2rtc, MQTT); copied into the volume once by birdnet-go-seed
 frigate/config.yml        Frigate 0.17 + go2rtc for the Amcrest
 mosquitto/mosquitto.conf
 homeassistant/yardwatch.yaml   HA package: sensors, first-of-year push, nightly digest

@@ -7,7 +7,7 @@
 #   birdnet-go /api/v2 ──▶ fugleramme (the naturalist-plate kiosk, :8080)
 #   everything ──mqtt──▶ mosquitto ──▶ Home Assistant (lifer pushes, TTS, nightly digest)
 #
-# Bring-up order: mosquitto, frigate, birdnet-go, fugleramme, yawamf.
+# Bring-up order: mosquitto, frigate, birdnet-go (after birdnet-go-seed), fugleramme, yawamf.
 # Copy .env.example to .env first. Every host-specific value lives there.
 
 name: yardwatch
@@ -65,6 +65,35 @@ services:
     networks: [yardwatch]
     depends_on: [mosquitto]
 
+  # BirdNET-Go rewrites its config file (session secret on first boot, migrations,
+  # every UI settings save) and its entrypoint chowns /config. So the repo file is a
+  # template: this one-shot copies it into the birdnet-config volume only if no live
+  # config exists yet. To push repo edits over the live config (drops UI edits):
+  #   docker compose run --rm -e SEED_FORCE=1 birdnet-go-seed && docker compose restart birdnet-go
+  birdnet-go-seed:
+    image: busybox:1.37
+    container_name: yw-birdnet-go-seed
+    restart: "no"
+    environment:
+      SEED_FORCE: ${SEED_FORCE:-0}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -f /config/config.yaml ] && [ "$$SEED_FORCE" != 1 ]; then
+          echo "live config exists, not seeding"
+        else
+          cp /seed/config.yaml /config/config.yaml
+          chown "$$PUID:$$PGID" /config/config.yaml
+          echo "seeded /config/config.yaml from repo"
+        fi
+    volumes:
+      - ./birdnet-go/config.yaml:/seed/config.yaml:ro
+      - birdnet-config:/config
+    network_mode: none
+
   birdnet-go:
     # Upstream tags by date. Pin, do not float: an unattended pull must not swap the detector.
     image: ghcr.io/tphakala/birdnet-go:${BIRDNET_TAG:-20260823}
@@ -76,8 +105,7 @@ services:
       BIRDNET_UID: ${PUID:-1000}
       BIRDNET_GID: ${PGID:-1000}
     volumes:
-      - ./birdnet-go/config.yaml:/config/config.yaml
-      - birdnet-config:/config
+      - birdnet-config:/config         # config.yaml seeded by birdnet-go-seed
       - birdnet-data:/data            # detections live here. keep it.
     tmpfs:
       - /data/logs:size=128M,uid=${PUID:-1000},gid=${PGID:-1000},mode=0755
@@ -85,7 +113,13 @@ services:
     ports:
       - "8090:8080"
     networks: [yardwatch]
-    depends_on: [mosquitto, frigate]
+    depends_on:
+      mosquitto:
+        condition: service_started
+      frigate:
+        condition: service_started
+      birdnet-go-seed:
+        condition: service_completed_successfully
 
   fugleramme:
     image: ghcr.io/arnegiacomo/fugleramme:${FUGLERAMME_TAG:-latest}
