@@ -21,7 +21,7 @@ x-logging: &logging
 
 services:
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.1.2-alpine
     container_name: yw-mosquitto
     restart: unless-stopped
     <<: *logging
@@ -33,7 +33,7 @@ services:
     networks: [yardwatch]
 
   frigate:
-    # Pin a real tag before production; 0.17 is the floor YA-WAMF requires.
+    # 0.17 is the floor YA-WAMF requires; config.yml is validated against 0.17.2.
     image: ghcr.io/blakeblackshear/frigate:${FRIGATE_TAG:-0.17.2}
     container_name: yw-frigate
     restart: unless-stopped
@@ -71,7 +71,7 @@ services:
   # config exists yet. To push repo edits over the live config (drops UI edits):
   #   docker compose run --rm -e SEED_FORCE=1 birdnet-go-seed && docker compose restart birdnet-go
   birdnet-go-seed:
-    image: busybox:1.37
+    image: busybox:1.37.0
     container_name: yw-birdnet-go-seed
     restart: "no"
     environment:
@@ -122,7 +122,7 @@ services:
         condition: service_completed_successfully
 
   fugleramme:
-    image: ghcr.io/arnegiacomo/fugleramme:${FUGLERAMME_TAG:-latest}
+    image: ghcr.io/arnegiacomo/fugleramme:${FUGLERAMME_TAG:-0.22.0}
     container_name: yw-fugleramme
     restart: unless-stopped
     <<: *logging
@@ -139,7 +139,7 @@ services:
     depends_on: [birdnet-go]
 
   yawamf:
-    image: ghcr.io/jellman86/yawamf-monalithic:${YAWAMF_TAG:-latest-intel}
+    image: ghcr.io/jellman86/yawamf-monalithic:${YAWAMF_TAG:-v2.18.0-intel}
     container_name: yw-yawamf
     restart: unless-stopped
     <<: *logging
