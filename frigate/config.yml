@@ -1,5 +1,7 @@
 # Frigate 0.17 config for one Amcrest IP8M-T2599EW aimed at the feeder.
-# ${CAM_USER} ${CAM_PASS} ${CAM_IP} are substituted from the container environment.
+# {FRIGATE_CAM_USER} {FRIGATE_CAM_PASS} {FRIGATE_CAM_IP} are substituted from the container environment.
+# Frigate runs Python str.format over go2rtc streams with only FRIGATE_* variables, so
+# ${VAR} and non-FRIGATE_ names abort go2rtc startup. Keep { and } out of the camera password.
 #
 # Camera-side settings to make before this works (web UI at http://CAM_IP):
 #   Setting > Camera > Video: main stream H.264 (not H.265) 3840x2160 @ 15 fps, CBR ~8192 kbps, I-frame interval 15 (1s)
@@ -8,6 +10,10 @@
 #   Setting > Network > P2P: disable.  Setting > Network > Access platform / Cloud: disable.
 #   Setting > System > Account: add user "frigate" with live + playback only.
 #   Setting > Camera > Conditions: day mode forced, IR off (spider webs), WDR on if the feeder is backlit.
+
+# Schema version. Frigate skips its config migration when this matches (and cannot
+# migrate anyway: the file is mounted read-only).
+version: 0.17-0
 
 mqtt:
   enabled: true
@@ -21,10 +27,12 @@ detectors:
     type: openvino
     device: GPU
 
+# The SSDLite MobileNet v2 IR baked into the 0.17 image (docker/main/Dockerfile, models stage)
+# is converted from the TF COCO graph: 300x300, NHWC.
 model:
-  width: 320
-  height: 320
-  input_tensor: nchw
+  width: 300
+  height: 300
+  input_tensor: nhwc
   input_pixel_format: bgr
   path: /openvino-model/ssdlite_mobilenet_v2.xml
   labelmap_path: /openvino-model/coco_91cl_bkgr.txt
@@ -36,9 +44,9 @@ go2rtc:
   streams:
     # One camera session each; every consumer (Frigate record, Frigate detect, BirdNET-Go, your phone) reads from here.
     feeder:
-      - rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554/cam/realmonitor?channel=1&subtype=0#backchannel=0
+      - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASS}@{FRIGATE_CAM_IP}:554/cam/realmonitor?channel=1&subtype=0#backchannel=0
     feeder_sub:
-      - rtsp://${CAM_USER}:${CAM_PASS}@${CAM_IP}:554/cam/realmonitor?channel=1&subtype=1#backchannel=0
+      - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASS}@{FRIGATE_CAM_IP}:554/cam/realmonitor?channel=1&subtype=1#backchannel=0
 
 cameras:
   feeder:
@@ -70,9 +78,10 @@ cameras:
           min_score: 0.45
     record:
       enabled: true
-      retain:
-        days: 2
-        mode: motion
+      continuous:
+        days: 0             # no 24/7 footage
+      motion:
+        days: 2             # 0.17 replaced retain.{days,mode} with continuous/motion
       alerts:
         retain:
           days: 30
