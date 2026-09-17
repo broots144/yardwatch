@@ -1,7 +1,7 @@
 .env
 frigate/media/
-artwork/custom/birds/*.webp
-artwork/custom/birds/*.png
+artwork/custom/birds/*
+!artwork/custom/birds/.gitkeep
 tools/plates/.cache/
 tools/plates/candidates/
 tools/plates/out/
