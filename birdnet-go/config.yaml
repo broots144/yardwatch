@@ -24,7 +24,7 @@ realtime:
     export:
       enabled: true          # 15 s clip per detection, shown in the UI and pushed to HA
   rtsp:
-    transport: tcp
+    transport: tcp           # legacy global, still read at startup as the per-stream default
     streams:
       - name: feeder
         url: rtsp://frigate:8554/feeder
@@ -32,12 +32,14 @@ realtime:
         type: rtsp
         transport: tcp
         channelMode: downmix
-        mediaMode: audio-only      # go2rtc can SETUP the audio track alone; falls back if not
+        mediaMode: audio-only      # never falls back to the full stream, so a failed audio SETUP is visible; use auto to allow fallback
         gain: 0
   mqtt:
     enabled: true
     broker: tcp://mosquitto:1883
-    topic: birdnet             # detections publish as JSON on birdnet; YA-WAMF listens on birdnet/text by default, set it to birdnet
+    # Upstream default (defaults.go), pinned because HA and YA-WAMF depend on it.
+    # YA-WAMF listens on birdnet/text by default; set it to birdnet in its UI.
+    topic: birdnet
     retain: false
   birdweather:
     enabled: false             # flip on and paste the station token from app.birdweather.com to join the public map
